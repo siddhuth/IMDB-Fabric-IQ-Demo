@@ -1,46 +1,53 @@
 # Azure Web App Deployment
 
-## Option 1: Quick deploy (az webapp up)
+The Chainlit app in this folder is an optional surface — a chat UI that calls Claude (via Databricks Model Serving) and the Fabric IQ Ontology MCP endpoint. The canonical demo (Data Agent + VS Code MCP + Databricks notebook) does not require this app.
+
+## What `app.py` actually expects
+
+| Env var | Required | Notes |
+|---|---|---|
+| `MCP_ENDPOINT` | yes | Ontology MCP URL — see `../README.md` |
+| `DATABRICKS_HOST` | yes | e.g. `https://adb-xxxxx.azuredatabricks.net` |
+| `DATABRICKS_TOKEN` | yes | PAT or SP token with access to the model-serving endpoint |
+| `DATABRICKS_MODEL` | no | Defaults to `databricks-claude-sonnet-4` |
+
+Fabric auth uses `InteractiveBrowserCredential` — on first run a browser tab opens for sign-in. The signed-in identity must have **Member** (or higher) role on the Fabric workspace that owns the ontology.
+
+> **Production hardening:** Replace `InteractiveBrowserCredential` in `app.py` with `DefaultAzureCredential` (so it can pick up a Managed Identity or service principal) before deploying to a multi-user environment. The interactive flow is for local development and single-operator demos.
+
+Copy `.env.example` → `.env` and fill in values before running anything below.
+
+## Option 1: Quick deploy (`az webapp up`)
 
 ```bash
 cd webapp/
 
-# Create a .env file (do NOT commit this)
-cat > .env << 'EOF'
-ANTHROPIC_API_KEY=sk-ant-...
-AZURE_TENANT_ID=your-tenant-id
-AZURE_CLIENT_ID=your-service-principal-app-id
-AZURE_CLIENT_SECRET=your-service-principal-secret
-MCP_ENDPOINT=https://api.fabric.microsoft.com/v1/mcp/dataPlane/workspaces/<ws-id>/items/<ont-id>/ontologyEndpoint
-EOF
-
-# Deploy
+# Deploy the code
 az webapp up \
   --runtime PYTHON:3.11 \
   --name imdb-casting-graph \
   --resource-group your-rg \
   --sku B1
 
-# CRITICAL: Set startup command (Chainlit, not gunicorn)
+# CRITICAL: Set startup command (Chainlit, not gunicorn).
+# Without this, Azure defaults to gunicorn and the app will not start.
 az webapp config set \
   --name imdb-casting-graph \
   --resource-group your-rg \
   --startup-file "chainlit run app.py --host 0.0.0.0 --port 8000"
 
-# Set the port Azure listens on
+# Tell Azure which port the container listens on
 az webapp config appsettings set \
   --name imdb-casting-graph \
   --resource-group your-rg \
   --settings WEBSITES_PORT=8000
 
-# Set env vars on the web app
+# Push the env vars from your local .env into App Service settings
 az webapp config appsettings set \
   --name imdb-casting-graph \
   --resource-group your-rg \
   --settings @.env
 ```
-
-> **Without the startup command, the deployment will fail.** Azure defaults to gunicorn, which doesn't know how to start Chainlit.
 
 ## Option 2: Docker container
 
@@ -60,37 +67,19 @@ az webapp create --name imdb-casting-graph --plan your-plan \
 ```bash
 cd webapp/
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...
-export AZURE_TENANT_ID=...
-export AZURE_CLIENT_ID=...
-export AZURE_CLIENT_SECRET=...
-export MCP_ENDPOINT=https://api.fabric.microsoft.com/v1/mcp/...
+
+# Either: load env from .env via your shell tool of choice
+set -a; source .env; set +a
+
 chainlit run app.py
 ```
 
-Opens at http://localhost:8000
+Opens at http://localhost:8000. The first request triggers an interactive browser sign-in to Fabric.
 
-## Service principal setup
+## Pre-demo smoke test
 
-The web app authenticates to Fabric via a service principal (not interactive browser auth). Create one:
+Deploy at least 1 hour before the session. Verify with:
+- *"How many titles are in the Top tier?"* (simple — verifies MCP connection)
+- *"Which actors appeared in both Top and Bottom tier movies?"* (multi-hop — verifies graph traversal)
 
-```bash
-# Create the service principal
-az ad sp create-for-rbac --name "imdb-casting-graph-sp" --role Reader
-
-# Note the appId, password, and tenant from the output
-# These become AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
-
-# Grant the SP access to the Fabric workspace:
-# Fabric portal → Workspace → Manage access → Add → paste the SP app ID → Member role
-```
-
-The SP needs **Member** role on the Fabric workspace to query the Ontology MCP endpoint.
-
-## For the demo
-
-Deploy at least 1 hour before the session. Test with:
-- "How many titles are in the Top tier?" (simple, verifies MCP connection)
-- "Which actors appeared in both Top and Bottom tier movies?" (multi-hop, verifies graph traversal)
-
-If the web app is slow on first request, it's the Chainlit cold start + MCP initialization. Second request should be fast.
+The first request after a cold start is slow (Chainlit boot + MCP init + browser auth). The second request should be fast.
