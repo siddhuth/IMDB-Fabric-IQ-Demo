@@ -25,15 +25,28 @@ from anthropic import Anthropic
 WORKSPACE_ID = "<YOUR-WORKSPACE-ID>"
 ONTOLOGY_ID = "<YOUR-ONTOLOGY-ID>"
 
+# Recommended for production: store the Anthropic key in a Databricks secret
+# scope and read it here:
+#     ANTHROPIC_API_KEY = dbutils.secrets.get("anthropic", "api_key")
+# For quick testing, paste directly (but never commit a real key):
+ANTHROPIC_API_KEY = "<YOUR-ANTHROPIC-API-KEY>"
+
+# Fail fast if placeholders weren't replaced — avoids a confusing 404 later.
+for name, value in [
+    ("WORKSPACE_ID", WORKSPACE_ID),
+    ("ONTOLOGY_ID", ONTOLOGY_ID),
+    ("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY),
+]:
+    if value.startswith("<") and value.endswith(">"):
+        raise ValueError(
+            f"{name} is still a placeholder ({value!r}). "
+            "Replace it with your actual value before running this cell."
+        )
+
 MCP_ENDPOINT = (
     f"https://api.fabric.microsoft.com/v1/mcp/dataPlane/"
     f"workspaces/{WORKSPACE_ID}/items/{ONTOLOGY_ID}/ontologyEndpoint"
 )
-
-# Anthropic API key from Databricks secrets
-# ANTHROPIC_API_KEY = dbutils.secrets.get("anthropic", "api_key")
-# Uncomment above for production. For quick testing, paste directly:
-ANTHROPIC_API_KEY = "<YOUR-ANTHROPIC-API-KEY>"
 
 MODEL = "claude-sonnet-4-6"
 
