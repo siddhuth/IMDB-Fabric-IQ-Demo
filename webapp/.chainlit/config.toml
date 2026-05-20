@@ -1,0 +1,12 @@
+[project]
+enable_telemetry = false
+
+[UI]
+name = "IMDB Casting Graph"
+description = "Claude + Fabric IQ Ontology MCP — Graph-powered movie analytics"
+default_theme = "dark"
+
+[UI.theme.dark]
+primary = "#E50914"
+background = "#141414"
+paper = "#1F1F1F"
