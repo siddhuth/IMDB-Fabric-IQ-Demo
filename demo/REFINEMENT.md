@@ -94,6 +94,49 @@ Tokens expire ~1h — refresh the MCP server token before testing (see the sessi
 
 ---
 
+## 3.1 Live validation results (after re-publish)
+
+The fix was applied by **regenerating** the ontology (rather than editing in place).
+The new published item is:
+
+- Ontology `IMDBCastingOnt` = `637760d3-d883-4680-83b0-c88d5058a91b`
+  (workspace unchanged: `0eceeaf8-391b-46d3-b86e-a99ccc4f8c9a`)
+- MCP endpoint: `.../workspaces/0eceeaf8-.../items/637760d3-.../ontologyEndpoint`
+
+`cast_id` was set as the `CastingDecision` entity key and all 5 relationships were
+re-bound and published. Verified live via `search_ontology`:
+
+| Test | Phrasing style | Result | Latency |
+|---|---|---|---|
+| `entityIdParts` on the edge | (structural check) | ✅ now populated (was `[]`) | — |
+| One-hop Title→`casting_decisions` | natural | ✅ works (was broken) | ~37s |
+| **Two-hop** Title→`casting_decisions`→people | natural ("cast members of the highest rated movie") | ❌ internal error | ~101s |
+| Cast of highest-rated title | **column-referencing** ("`top_3_billed_names` of the title with the highest rating") | ✅ OK | ~6s |
+| Both-tier people count | natural ("people in both a top- and bottom-tier movie") | ❌ internal error | ~101s |
+| Both-tier people count | **column-referencing** ("people with `spans_top_and_bottom` equal to true") | ✅ OK — 6,166 | ~5s |
+
+### Key finding — the engine does NOT auto-route to the fast columns
+
+Setting the edge key made **one-hop** traversal work, but **two-hop** traversal
+(Title → edge → people) still hits a hard ~101s 500 ceiling. Critically, the
+NL→GQL engine does **not** automatically substitute the precomputed safety-rail
+columns when a user asks in plain language — it attempts the slow traversal and
+fails. Because the editor build does not expose entity Descriptions, there is no
+way to steer it via metadata.
+
+**Demo guidance:** phrase questions to reference the precomputed columns by name.
+
+| ❌ Avoid (attempts slow traversal, ~101s error) | ✅ Use instead (~5–6s) |
+|---|---|
+| "Who are the cast members of the highest rated movie?" | "What is the `top_3_billed_names` of the title with the highest rating?" |
+| "How many people appeared in both a top- and bottom-tier movie?" | "How many people have `spans_top_and_bottom` equal to true?" |
+| "Which actors only ever play leads?" | "How many people have `lead_title_count` equal to `distinct_title_count`?" |
+
+One-hop questions ("which titles is person X in?") work in plain language. Reserve
+two-hop, person-through-edge-to-title questions for the column phrasings above.
+
+---
+
 ## 4. Phase 4 — Rayfin (Fabric Apps) integration
 
 See **`demo/PHASE4_RAYFIN_PLAN.md`** for the full, reviewed plan (architecture
