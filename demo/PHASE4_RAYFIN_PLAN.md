@@ -180,14 +180,14 @@ is always per-user via `@role` + `claims.sub`, regardless of this choice.
 > Review gate: we do **not** start until you confirm Section 4 (identity model)
 > and the prerequisites in Section 6.
 
-1. **Scaffold the app**
+1. **Scaffold the app** (into a new top-level `app/` folder in this repo)
    `npm create @microsoft/rayfin@latest` → choose a TS template; name it e.g.
    `imdb-casting-app`.
 2. **Define state models** — add `SavedQuestion` and `ChatTurn`
-   (`rayfin/data/*.ts`) as in Section 3.
-3. **Create the `ask_ontology` User Data Function** in the Fabric portal (Python
-   or Node), pasting the ontology MCP endpoint URL and the `search_ontology`
-   call. Grant its identity access to the ontology workspace (Option A).
+   (`app/rayfin/data/*.ts`) as in Section 3.
+3. **Create the Python `ask_ontology` User Data Function** in the Fabric portal,
+   pasting the ontology MCP endpoint URL and the `search_ontology` call. Grant
+   its identity Viewer on the ontology workspace (Option A, confirmed).
 4. **Wire auth** in `rayfin/rayfin.yml`: enable `auth` with `fabric.enabled:
    true` (SSO for deployed) and `password.enabled: true` (local dev only).
 5. **Build the UI** — a question box, a "thinking" state, an answer panel, a
@@ -212,11 +212,20 @@ is always per-user via `@role` + `claims.sub`, regardless of this choice.
 
 ---
 
-## 9. Open decisions for you to confirm before we build
+## 9. Decisions — CONFIRMED (2026-06-04)
 
-1. **Identity model** — Option A (service identity, recommended) or B (OBO)?
-2. **UDF language** — Python or Node.js for `ask_ontology`?
-3. **Scope of v1 UI** — just ask + history + favorites, or also surface the
-   Phase-3 example prompts as one-click "starter questions"?
-4. **Repo placement** — new top-level `app/` (Rayfin project) in this repo, or a
-   separate repo? (Rayfin scaffolds its own folder structure.)
+1. **Identity model → Option A, service identity.** The `ask_ontology` UDF calls
+   the ontology as its own managed identity (granted Viewer on the ontology
+   workspace). Disclosed as app-level access; fine for this public IMDB demo.
+   Per-user RLS still applies to the Rayfin state DB.
+2. **UDF language → Python.** Matches the existing notebooks and has the cleaner
+   MCP/HTTP story.
+3. **v1 UI scope → ask box + answer + per-user history/favorites + one-click
+   "starter questions"** seeded from the Phase 3 verification prompts
+   (`demo/REFINEMENT.md` §3).
+4. **Repo placement → new `app/` folder in this repo** (keeps the demo
+   self-contained; Rayfin scaffolds its own structure underneath).
+
+> Next action when you say go: scaffold `app/` with
+> `npm create @microsoft/rayfin@latest`, add the two state models, the Python
+> `ask_ontology` UDF, and the starter-questions UI, following the runbook in §7.
