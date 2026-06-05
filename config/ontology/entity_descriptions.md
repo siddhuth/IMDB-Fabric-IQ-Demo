@@ -9,7 +9,7 @@ For each entity below, copy the text block verbatim into the Description field i
 ## Title
 
 ```
-A movie in the IMDB database, filtered to theatrical releases from 1970 onward with at least 1,000 audience votes. Central entity in the casting graph — all casting decisions, ratings, and box office data connect through a Title. Key properties: title_id (IMDB tconst identifier), primary_title (movie name), start_year (release year), runtime_minutes, genres_str (comma-separated genre list), avg_rating (IMDB 1-10 scale), num_votes (audience vote count), decade (computed: floor of start_year to nearest 10), title_tier (computed: Top if rating >= 7.5, Bottom if < 4.5, otherwise Middle), votes_tier (computed: Viral if >= 100K votes, Popular if >= 10K, otherwise Niche), primary_genre (first genre from the genres list), cast_experience (computed: average career_title_count of top-3 billed cast — measures how experienced the lead ensemble is). Use title_tier for bimodal "Top vs Bottom" analysis. Use cast_experience to test whether experienced casts predict better outcomes.
+A movie in the IMDB database, filtered to theatrical releases from 1970 onward with at least 1,000 audience votes. Central entity in the casting graph — all casting decisions, ratings, and box office data connect through a Title. Key properties: title_id (IMDB tconst identifier), primary_title (movie name), start_year (release year), runtime_minutes, genres_str (comma-separated genre list), avg_rating (IMDB 1-10 scale), num_votes (audience vote count), decade (computed: floor of start_year to nearest 10), title_tier (computed: Top if rating >= 7.5, Bottom if < 4.5, otherwise Middle), votes_tier (computed: Viral if >= 100K votes, Popular if >= 10K, otherwise Niche), primary_genre (first genre from the genres list), cast_experience (computed: average career_title_count of top-3 billed cast — measures how experienced the lead ensemble is). Pre-computed cast features (materialized in setup_part3 so "who starred in / how big was the cast of movie X" needs no live edge traversal): cast_size (number of distinct credited actors/actresses), lead_count (number of distinct lead actors, billing_order <= 3), top_3_billed_names (comma-separated names of the TOP-3 BILLED actors only — this is NOT the complete cast; use it for "top-billed / headline stars", never claim it is the full cast). Use title_tier for bimodal "Top vs Bottom" analysis. Use cast_experience to test whether experienced casts predict better outcomes. IMPORTANT STEERING: for "who are the top-billed stars of movie X", return top_3_billed_names; for the COMPLETE cast list you must traverse the for_title relationship to CastingDecision (only reliable once cast_id is set as the CastingDecision entity key).
 ```
 
 **Source table:** `titles`
@@ -20,7 +20,7 @@ A movie in the IMDB database, filtered to theatrical releases from 1970 onward w
 ## Person
 
 ```
-An individual in the entertainment industry — actor, director, writer, producer, or other crew. Connected to Titles through CastingDecision edges. Key properties: person_id (IMDB nconst identifier), name (display name), birth_year, death_year, primary_profession (actor, director, writer, etc.), career_title_count (computed: total distinct titles in the filtered dataset), avg_title_rating (computed: average IMDB rating across all titles they appear in), first_title_year, last_title_year, career_span_years (computed: last - first), dominant_genre (computed: most frequent genre across their filmography), is_active (computed: appeared in a title from 2020 onward), bacon_number (computed: shortest path distance to Kevin Bacon through co-star connections, 0 = Bacon himself, 1 = direct co-star, null = unreachable within 6 hops). Use avg_title_rating to identify consistently high- or low-performing talent. Use bacon_number for connectivity and network analysis.
+An individual in the entertainment industry — actor, director, writer, producer, or other crew. Connected to Titles through CastingDecision edges. Key properties: person_id (IMDB nconst identifier), name (display name), birth_year, death_year, primary_profession (actor, director, writer, etc.), career_title_count (computed: total distinct titles in the filtered dataset), avg_title_rating (computed: average IMDB rating across all titles they appear in), first_title_year, last_title_year, career_span_years (computed: last - first), dominant_genre (computed: most frequent genre across their filmography), is_active (computed: appeared in a title from 2020 onward), bacon_number (computed: shortest path distance to Kevin Bacon through co-star connections, 0 = Bacon himself, 1 = direct co-star, null = unreachable within 6 hops). Pre-computed graph-derived tier features (materialized in setup_part3 so intersection questions do NOT require live edge traversal): distinct_title_count (distinct titles the person appears in), top_title_count / middle_title_count / bottom_title_count (count of DISTINCT titles in each rating tier), lead_title_count (distinct titles where the person had a lead role, billing_order <= 3), appeared_in_top (boolean: has at least one Top-tier title), appeared_in_bottom (boolean: has at least one Bottom-tier title), spans_top_and_bottom (boolean: appears in BOTH a Top-tier AND a Bottom-tier title). Use avg_title_rating to identify consistently high- or low-performing talent. Use bacon_number for connectivity and network analysis. IMPORTANT STEERING: for "people / actors who appeared in BOTH Top-tier and Bottom-tier movies", filter Person on spans_top_and_bottom = true (do NOT attempt a Person->CastingDecision->Title self-intersection). For "how many top-rated vs bottom-rated titles does this person have", read top_title_count / bottom_title_count directly.
 ```
 
 **Source table:** `people`
@@ -91,6 +91,29 @@ The bold rows are the core graph edges. The `Person → CastingDecision → Titl
 **Relationship naming:** The Ontology auto-generator creates relationship names based on column names (e.g., `title_id_relationship`). For better agent reasoning, rename them to the semantic names listed above (`cast_in`, `for_title`, `has_rating`, `has_performance`) in the Ontology editor after generation.
 
 **Cross-filter direction:** Set to **Both** on `Person ↔ CastingDecision` and `CastingDecision ↔ Title` so that queries can traverse the graph in both directions (e.g., "given a Title, find all People" AND "given a Person, find all Titles").
+
+---
+
+## ⚠️ CRITICAL structural fixes (verified against the live MCP endpoint)
+
+Live testing of the **published** Ontology via `search_ontology` showed that every question requiring a traversal *through* `casting_decisions` (Person → CastingDecision → Title) fails with an internal error after ~100s. Inspection via `list_ontology_entity_types` showed the published `casting_decisions` entity has **`entityIdParts: []` — i.e. no entity key was actually applied**, even though this doc lists `cast_id` as the key. Without a key the engine cannot index the edge and falls back to an unindexed join that times out.
+
+Before re-publishing, apply these in the Ontology editor and then re-run the test prompts in `demo/REFINEMENT.md`:
+
+1. **Set the CastingDecision entity key to `cast_id`.** (Run `notebooks/setup_part3_refinement.py` first — it validates that `cast_id` is unique + non-null so it can be used as a key.)
+2. **Confirm the `cast_in` and `for_title` relationships exist** and have **cross-filter = Both**. If `list_ontology_entity_types` shows no relationships, add them manually.
+3. **Re-publish** and re-test. Only after this is the underlying graph genuinely traversable.
+
+The pre-computed columns added in `setup_part3` (Person tier-span flags, Title cast features) are **safety rails**, not a substitute for the structural fix — they keep the most common multi-hop demo questions reliable and fast, but the structural fix is what makes arbitrary graph traversal work.
+
+## Steering the agent: phrasing-sensitive predicate loss
+
+NL→GQL translation is phrasing-sensitive for aggregate filters. Vague phrasing such as "genres with at least 100 titles" can silently DROP the HAVING filter, while explicit phrasing applies it. When writing demo prompts (and when steering the agent), prefer:
+
+- ✅ "...only including genres having more than 100 titles" / "...where the count of titles is greater than 100"
+- ❌ "...genres with 100+ titles" / "popular genres"
+
+For intersection / multi-tier questions, prefer the pre-computed flags (`spans_top_and_bottom`, `appeared_in_top`, `appeared_in_bottom`) over describing a self-join.
 
 ---
 
