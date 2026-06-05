@@ -24,21 +24,28 @@ ontology call.
 
 ## Run it locally (no Fabric needed)
 
+### Fastest: standalone static preview (no backend at all)
+
+```bash
+npm run dev:static   # vite --mode static --host  →  http://localhost:5173/
+```
+
+This sets `VITE_STATIC_DEMO=1` (see `.env.static`): auth is bypassed with a demo
+user, questions are answered by the local mock (real verified answers for the
+starter questions), and saved/history live in memory. The whole Q&A UI renders
+and is clickable with zero Fabric setup — ideal for a quick look or a UI demo.
+
+### Full local dev (bundled Rayfin backend)
+
 ```bash
 npm install        # already done by the scaffolder
 npm run test       # vitest — services covered in in-memory/mock mode
 npm run build      # tsc + vite production build
 ```
 
-For an interactive local preview against the **mock** backend (canned answers
-for the verified starter questions, in-memory saved/history):
-
-```bash
-npx vite           # serves http://localhost:5173 with MockAuthService
-```
-
-> `npm run dev` additionally runs `rayfin up` / `rayfin env`, which require a
-> Fabric login and a deployed backend — use plain `npx vite` for offline UI work.
+`npm run dev` runs `rayfin up` / `rayfin env`, which require a Fabric login and a
+deployed backend. The scaffold's `MockAuthService` still signs in against the
+bundled local backend at `:5168`, so use `npm run dev:static` for offline UI work.
 
 ## What's wired vs. what you must do in Fabric
 

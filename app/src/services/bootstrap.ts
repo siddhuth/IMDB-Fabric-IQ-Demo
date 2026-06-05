@@ -1,6 +1,7 @@
 import type { IAuthService } from './IAuthService';
 import { MockAuthService } from './MockAuthService';
 import { RayfinAuthService } from './RayfinAuthService';
+import { StaticDemoAuthService } from './StaticDemoAuthService';
 import { initRayfinClient } from './rayfinClient';
 
 function isLocalBackendUrl(url: string): boolean {
@@ -24,7 +25,11 @@ export function bootstrapAuth(): IAuthService {
   const localDev = isLocalBackendUrl(apiUrl);
   const publishableKey = import.meta.env.VITE_RAYFIN_PUBLISHABLE_KEY;
 
-  if (!publishableKey && !localDev) {
+  // Standalone static preview: no backend, no Fabric. Everything (questions,
+  // saved, history) runs in-memory/mock. Enabled with VITE_STATIC_DEMO=1.
+  const staticDemo = import.meta.env.VITE_STATIC_DEMO === '1';
+
+  if (!publishableKey && !localDev && !staticDemo) {
     throw new Error(
       'VITE_RAYFIN_PUBLISHABLE_KEY environment variable is required'
     );
@@ -33,8 +38,12 @@ export function bootstrapAuth(): IAuthService {
   const client = initRayfinClient({
     baseUrl: apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`,
     publishableKey: publishableKey ?? 'local-dev-key',
-    localDev,
+    localDev: localDev || staticDemo,
   });
+
+  if (staticDemo) {
+    return new StaticDemoAuthService();
+  }
 
   if (localDev) {
     return new MockAuthService(client);
