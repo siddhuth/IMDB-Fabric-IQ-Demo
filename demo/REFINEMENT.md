@@ -94,38 +94,28 @@ Tokens expire ~1h — refresh the MCP server token before testing (see the sessi
 
 ---
 
-## 4. Phase 4 — Rayfin (Fabric Apps) integration: scoped spike
+## 4. Phase 4 — Rayfin (Fabric Apps) integration
 
-**Rayfin = Fabric Apps (preview)** — a code-first Backend-as-a-Service. TS
-`@entity` models → `rayfin up` deploys a managed SQL DB + GraphQL Data API +
-Fabric SSO/Entra auth + static hosting into Fabric.
+See **`demo/PHASE4_RAYFIN_PLAN.md`** for the full, reviewed plan (architecture
+diagram, data models, identity options, prerequisites, and step-by-step
+runbook). In short:
 
-**Architecture (Option A — governed front door):** the Rayfin app owns app
-concerns (web UI, Fabric SSO, a small persistent-state DB for saved questions /
-chat history / favorites) and **delegates analytical Q&A server-side to the
-ontology `search_ontology` MCP tool**. We do NOT mirror IMDB data into Rayfin's
-SQL DB (its DB is app-owned/schema-from-code, not a wrapper over the Lakehouse).
-
-**Resolve these BEFORE building UI (spike):**
-
-1. **Auth model — the biggest risk.** Decide explicitly:
-   - *User-delegated* (preserves per-user Fabric governance): requires an
-     on-behalf-of / token-exchange flow to obtain a token whose audience is
-     `https://api.fabric.microsoft.com` for the ontology MCP endpoint. Confirm
-     Rayfin exposes the signed-in Fabric user token server-side.
-   - *Service identity* (simpler): one app identity calls the ontology; every
-     user sees whatever that identity can access. Must be disclosed as
-     app-level access and scoped tightly.
-   - Do **not** ship `InteractiveBrowserCredential`-style auth — that is
-     local/dev only.
-2. **Endpoint reachability** from the Rayfin server runtime to
-   `api.fabric.microsoft.com`.
-3. **Timeout budget.** Cold calls hit 65s and traversals can run ~100s. Set the
-   backend analytical timeout **> 120s**, show progress states, and consider
-   caching known demo prompts.
-4. **Prereq:** tenant admin enables the "Fabric Apps (preview)" workload and the
-   workspace has an assigned capacity.
-
-Scaffold (once the spike clears): `npm create @microsoft/rayfin@latest`,
-configure `rayfin.yml`, define persistent-state models in `rayfin/data/`, add a
-server route that calls `search_ontology`, deploy with `npx rayfin up`.
+- **Rayfin = Fabric Apps (preview)** — code-first TS data models →
+  managed **SQL DB + GraphQL API + Fabric SSO + static hosting**, deployed with
+  `npx rayfin up`.
+- The app is a **governed front door**: it owns app state only (saved questions,
+  per-user chat history, RLS via `@role`/`claims.sub`) and **delegates
+  analytical Q&A** to the existing ontology.
+- The delegation seam is a **Fabric User Data Function** invoked from the app via
+  `client.functions.askOntology.invoke(...)`. The function holds the
+  Fabric-audience credential and calls `search_ontology` — the browser never
+  does. (Calling the ontology directly from the static frontend is not viable:
+  its SSO session is scoped to the app, not `api.fabric.microsoft.com`, and
+  static content is public.)
+- **No IMDB data is duplicated** into Rayfin's SQL DB; the ontology stays the
+  analytical source of truth.
+- Key open decision: identity model for the ontology call — **service identity**
+  (recommended for this public-data demo) vs **user-delegated OBO** (for
+  per-user governance). Details in the plan.
+- Carry over the measured latency: set the function/HTTP timeout **> 120s**,
+  show a progress state, and pre-warm the capacity before demos.
