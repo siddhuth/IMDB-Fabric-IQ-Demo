@@ -14,7 +14,7 @@ import {
   toggleFavorite,
   type SavedQuestionItem,
 } from '@/services/savedQuestions';
-import { STARTER_QUESTIONS } from '@/services/starterQuestions';
+import { STARTER_TIERS } from '@/services/starterQuestions';
 
 interface CurrentAnswer {
   question: string;
@@ -108,7 +108,7 @@ export function HomePage() {
         <div>
           <h1 className="text-lg font-bold text-gray-900">IMDB Casting Graph</h1>
           <p className="text-xs text-gray-500">
-            Ask the Fabric IQ ontology in plain English
+            From a Table to Talent Intelligence — ask the Fabric IQ ontology
           </p>
         </div>
         <div className="flex items-center gap-4">
@@ -145,24 +145,30 @@ export function HomePage() {
             </button>
           </form>
 
-          <div className="mb-6">
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
-              Starter questions
+          <div className="mb-6 space-y-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+              Starter questions — the story arc
             </h2>
-            <div className="flex flex-wrap gap-2">
-              {STARTER_QUESTIONS.map((q) => (
-                <button
-                  key={q.question}
-                  onClick={() => handleStarter(q.question)}
-                  disabled={asking}
-                  title={q.question}
-                  className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 shadow-sm transition-colors hover:border-blue-400 hover:text-blue-700 disabled:opacity-40"
-                >
-                  <span className="mr-1 text-gray-400">{q.tier}:</span>
-                  {q.label}
-                </button>
-              ))}
-            </div>
+            {STARTER_TIERS.map((group) => (
+              <div key={group.tier}>
+                <p className="mb-1.5 text-[11px] font-semibold text-gray-500">
+                  {group.tier}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {group.items.map((q) => (
+                    <button
+                      key={q.question}
+                      onClick={() => handleStarter(q.question)}
+                      disabled={asking}
+                      title={q.question}
+                      className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 shadow-sm transition-colors hover:border-blue-400 hover:text-blue-700 disabled:opacity-40"
+                    >
+                      {q.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           {asking && (
