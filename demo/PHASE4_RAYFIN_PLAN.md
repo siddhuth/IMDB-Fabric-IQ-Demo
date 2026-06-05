@@ -1,8 +1,11 @@
 # Phase 4 — Rayfin (Fabric Apps) Integration Plan
 
-> **Status: PLAN ONLY — nothing is deployed.** This document is for review. It
-> describes how a Rayfin / Fabric Apps front door layers over the existing IMDB
-> Casting Graph ontology so you can decide before we scaffold any code.
+> **Status: SCAFFOLDED & COMPILING (2026-06-05).** The `app/` folder now holds a
+> working Rayfin app — data models, the typed `ask_ontology` functions surface,
+> the Python UDF source, and the Q&A UI — that passes `tsc`, `vitest`, `vite
+> build`, and `eslint`, and boots locally in mock mode. Remaining work is the
+> Fabric portal/deploy steps (publish the UDF, grant Viewer, `rayfin up`). See
+> `app/README.md` for the deploy runbook. The plan below is retained for context.
 >
 > Grounded in Microsoft Learn (`/fabric/apps/*`, June 2026 preview):
 > Fabric Apps = code-first TS data models → generated **SQL DB + GraphQL API +

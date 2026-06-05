@@ -1,0 +1,3 @@
+# Fabric User Data Functions runtime provides fabric.functions.
+azure-identity>=1.17.0
+requests>=2.31.0
