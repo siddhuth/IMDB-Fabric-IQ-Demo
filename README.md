@@ -1,6 +1,6 @@
 # IMDB Casting Graph — A Microsoft Fabric IQ Ontology Demo
 
-A reproducible reference build that turns a Microsoft Fabric Semantic Model (zero DAX) into a **Fabric IQ Ontology** and exposes it to AI models through the **Model Context Protocol (MCP)**. The same ontology answers questions from the Fabric Data Agent (GPT‑4o), from VS Code with Claude, from a Databricks notebook, and from a small Chainlit web app — one graph, any model, any surface.
+A reproducible reference build that turns a Microsoft Fabric Semantic Model (zero DAX) into a **Fabric IQ Ontology** and exposes it to AI models through the **Model Context Protocol (MCP)**. The same ontology answers questions from the Fabric Data Agent (GPT‑4o), from VS Code with Claude, and from a small Chainlit web app — one graph, any model, any surface.
 
 The dataset is the public IMDB collection: ~25,000 movies, ~80,000 people, ~200,000 casting decisions, with synthetic but genre-correlated box office data and pre-computed Kevin Bacon degrees.
 
@@ -40,10 +40,11 @@ A scripted demo flow with five canonical questions is in [`demo/TALKING_POINTS.m
         ┌─────────▼─────────┐                ┌────────▼────────────────┐
         │ Fabric Data Agent │                │  Any MCP client         │
         │     (GPT‑4o)      │                │  • VS Code + Claude     │
-        └───────────────────┘                │  • Databricks notebook  │
-                                             │  • Chainlit web app     │
+        └───────────────────┘                │  • Chainlit web app     │
                                              └─────────────────────────┘
 ```
+
+The agent system prompt is maintained once, in [`config/agent_prompt.md`](config/agent_prompt.md) — the Data Agent instructions are pasted from it and the Chainlit app loads it at runtime, so the entity steering and tier thresholds can never drift between surfaces.
 
 ---
 
@@ -51,13 +52,15 @@ A scripted demo flow with five canonical questions is in [`demo/TALKING_POINTS.m
 
 | Path | What's in it |
 |---|---|
-| `notebooks/` | Two Fabric notebook cells: IMDB ingest + filter, synthetic box office + Kevin Bacon BFS |
+| `notebooks/` | Three Fabric notebook cells: IMDB ingest + filter, synthetic box office + Kevin Bacon BFS, ontology refinement features |
+| `config/agent_prompt.md` | **Canonical agent system prompt** — single source of truth for all surfaces |
 | `config/semantic-model/` | Relationship reference table for the Semantic Model |
 | `config/ontology/` | Paste-ready entity descriptions for the Ontology editor |
-| `databricks/` | MCP client and Claude agent loop for a Databricks notebook |
-| `webapp/` | Optional Chainlit chat UI (Azure App Service deployment) |
-| `demo/RUNBOOK.md` | Full 8‑phase build guide, ~65 min end-to-end |
+| `webapp/` | Optional Chainlit chat UI: Claude (Anthropic API) + MCP (Azure App Service deployment) |
+| `demo/RUNBOOK.md` | Full 7‑phase build guide, ~55 min end-to-end |
 | `demo/TALKING_POINTS.md` | The 60‑min live demo script |
+| `demo/REFINEMENT.md` | Ontology refinement runbook (entity key fix + materialized graph features) |
+| `demo/PHASE4_RAYFIN_PLAN.md` | **Next phase:** Rayfin (Fabric Apps) governed front-door plan |
 | `demo/QUALITY_GATES.md` | 9‑point checklist to validate the build before showing it |
 
 ---
@@ -74,18 +77,18 @@ You provide your own Azure / Fabric tenant — nothing in this repo references a
 
 **Optional (for the MCP surfaces):**
 - VS Code with MCP server support (for the Claude-in-VS-Code path)
-- An Anthropic API key, *or* an Azure Databricks workspace with a Claude model-serving endpoint (for the Databricks notebook and Chainlit web app)
+- An Anthropic API key (for the Chainlit web app)
 - Azure CLI + an Azure subscription (only if deploying the Chainlit app to App Service)
 
-**Cost note:** The build itself runs entirely in your Fabric capacity. IMDB datasets are downloaded once (~500 MB compressed). Anthropic / Databricks model usage during the demo is small (typically <$1 per session).
+**Cost note:** The build itself runs entirely in your Fabric capacity. IMDB datasets are downloaded once (~500 MB compressed). Anthropic model usage during the demo is small (typically <$1 per session).
 
 ---
 
 ## Quick start
 
 1. **Clone this repo.**
-2. **Open `demo/RUNBOOK.md`** and follow Phases 1 → 8. Total build time ~65 min; do this **before** your demo session, not during.
-3. **Validate** by running the three smoke-test queries in Phase 8 of the RUNBOOK.
+2. **Open `demo/RUNBOOK.md`** and follow Phases 1 → 7. Total build time ~55 min; do this **before** your demo session, not during.
+3. **Validate** by running the three smoke-test queries in Phase 7 of the RUNBOOK.
 4. **Run the live demo** using `demo/TALKING_POINTS.md`.
 
 If you only want to see the ontology answer questions (no MCP), Phases 1–5 are sufficient (~45 min).
@@ -100,10 +103,9 @@ All customer-specific values are environment variables or clearly-marked placeho
 |---|---|
 | Fabric workspace name (default `IMDBCastingGraphIQ`) | `demo/RUNBOOK.md` Phase 1 — rename freely |
 | Lakehouse / Semantic Model / Ontology / Data Agent names | `demo/RUNBOOK.md` Phases 1–5 — rename freely |
-| `WORKSPACE_ID`, `ONTOLOGY_ID` | `databricks/01_mcp_connection.py` lines 25–26 — copy from the Ontology browser URL after Phase 4 |
-| `ANTHROPIC_API_KEY` | Databricks secret scope, or env var for the web app |
-| `MCP_ENDPOINT` | Constructed from your workspace + ontology IDs; format in `demo/RUNBOOK.md` Phase 6 |
-| `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `DATABRICKS_MODEL` | Only needed for the Chainlit web app; see `webapp/.env.example` |
+| `MCP_ENDPOINT` | Constructed from your workspace + ontology IDs (copy them from the Ontology browser URL after Phase 4); format in `demo/RUNBOOK.md` Phase 6 |
+| `ANTHROPIC_API_KEY` | Env var / App Service setting for the web app; see `webapp/.env.example` |
+| `ANTHROPIC_MODEL` (optional) | Defaults to `claude-opus-4-8`; see `webapp/.env.example` |
 
 A starter `.env.example` lives in `webapp/`. Copy it to `webapp/.env` and fill in values — `.env` is gitignored.
 
@@ -115,7 +117,7 @@ This demo is intentionally about movies because the relationships are intuitive.
 
 - **Swap the dataset:** Replace `notebooks/setup_part1_imdb.py` with your own ingest. Keep five-ish entities and one true "edge-as-entity" table (the equivalent of `casting_decisions`).
 - **Adjust the filters:** `MIN_YEAR` and `MIN_VOTES` in `setup_part1_imdb.py` control dataset size. Lower them for a richer graph (slower) or raise them for faster iteration.
-- **Update the agent instructions:** `demo/RUNBOOK.md` Phase 5 contains the Data Agent system prompt; update entity names and pre-computed columns to match your data.
+- **Update the agent instructions:** `config/agent_prompt.md` is the canonical agent prompt for every surface; update entity names and pre-computed columns there to match your data.
 
 The `demo/QUALITY_GATES.md` file documents a 9‑point review prompt you can run against any custom build to catch schema drift, threshold mismatches, GQL-safety issues, and reproducibility gaps before going live.
 
@@ -123,10 +125,10 @@ The `demo/QUALITY_GATES.md` file documents a 9‑point review prompt you can run
 
 ## Security and secrets
 
-- **No real secrets are committed.** Every credential reference in this repo is a placeholder (e.g., `<YOUR-ANTHROPIC-API-KEY>`, `your-tenant-id`). The Databricks cell intentionally fails fast if you try to run it without replacing the placeholder.
-- **`.env` is gitignored** in `webapp/`. Use `webapp/.env.example` as a template.
-- **Production deployments** of the Chainlit app should use a service principal or Managed Identity instead of interactive browser auth. The current `webapp/app.py` uses `InteractiveBrowserCredential` for simplicity — see the comment in `webapp/DEPLOY.md` for the hardening path.
-- **Anthropic / Databricks tokens** should live in Databricks secret scopes, Azure Key Vault, or App Service application settings — never in source.
+- **No real secrets are committed.** Every credential reference in this repo is a placeholder. The web app fails fast with a clear message if a required env var is missing.
+- **`.env` is gitignored** in `webapp/`. Use `webapp/.env.example` as a template. A `.dockerignore` at the repo root keeps `.env` files out of Docker images.
+- **Fabric auth** in `webapp/app.py` uses `DefaultAzureCredential` — it picks up a Managed Identity or service principal in Azure and falls back to Azure CLI / interactive browser sign-in for local development. See `webapp/DEPLOY.md`.
+- **Anthropic API keys** should live in Azure Key Vault or App Service application settings — never in source.
 
 If you fork this repo, run `git log -p` once over your additions to confirm you haven't accidentally captured a token.
 
@@ -144,6 +146,14 @@ If you fork this repo, run `git log -p` once over your additions to confirm you 
 | Chainlit app fails on Azure with gunicorn errors | Default startup command is wrong | Set the Chainlit startup command per `webapp/DEPLOY.md` |
 
 If you hit a failure not on this list, the RUNBOOK has a per-phase **Checkpoint** and the QUALITY_GATES doc has a 9‑point review prompt that catches most cross-file inconsistencies.
+
+---
+
+## What's next — Rayfin (Fabric Apps) app layer
+
+The next phase of this demo layers a **governed web app** over the ontology using **Rayfin / Fabric Apps (preview)**: Fabric SSO, per-user saved questions and chat history in a generated SQL DB, and analytical Q&A delegated to the existing ontology through a Python User Data Function. No IMDB data is duplicated — the ontology stays the single analytical source of truth.
+
+The full reviewed plan (architecture, data models, identity decision, step-by-step runbook) is in [`demo/PHASE4_RAYFIN_PLAN.md`](demo/PHASE4_RAYFIN_PLAN.md); the decisions are locked in §9. The app will be scaffolded into a top-level `app/` folder.
 
 ---
 

@@ -24,6 +24,25 @@ MIN_YEAR = 1970
 MIN_VOTES = 1000
 LAKEHOUSE_FILES = "/lakehouse/default/Files/imdb"
 
+# Tier thresholds — referenced by config/agent_prompt.md and
+# config/ontology/entity_descriptions.md. Change in ALL places or run
+# the demo/QUALITY_GATES.md review to catch drift.
+TOP_TIER_RATING = 7.5      # title_tier "Top" / sentiment_tier "Acclaimed"
+BOTTOM_TIER_RATING = 4.5   # title_tier "Bottom"
+SOLID_RATING = 5.5         # sentiment_tier "Solid"
+MIXED_RATING = 4.0         # sentiment_tier "Mixed"
+VIRAL_VOTES = 100_000      # votes_tier "Viral"
+POPULAR_VOTES = 10_000     # votes_tier "Popular"
+LEAD_BILLING_ORDER = 3     # is_lead
+
+
+def votes_tier_col():
+    return (
+        F.when(F.col("num_votes") >= VIRAL_VOTES, "Viral")
+         .when(F.col("num_votes") >= POPULAR_VOTES, "Popular")
+         .otherwise("Niche")
+    )
+
 # ── Step 1: Download IMDB datasets ──
 os.makedirs(LAKEHOUSE_FILES, exist_ok=True)
 for f in FILES:
@@ -91,16 +110,11 @@ titles_df = (
     .withColumn("decade", (F.floor(F.col("start_year") / 10) * 10).cast("int"))
     .withColumn(
         "title_tier",
-        F.when(F.col("avg_rating") >= 7.5, "Top")
-         .when(F.col("avg_rating") < 4.5, "Bottom")
+        F.when(F.col("avg_rating") >= TOP_TIER_RATING, "Top")
+         .when(F.col("avg_rating") < BOTTOM_TIER_RATING, "Bottom")
          .otherwise("Middle"),
     )
-    .withColumn(
-        "votes_tier",
-        F.when(F.col("num_votes") >= 100000, "Viral")
-         .when(F.col("num_votes") >= 10000, "Popular")
-         .otherwise("Niche"),
-    )
+    .withColumn("votes_tier", votes_tier_col())
     .withColumn(
         "primary_genre",
         F.split(F.col("genres_str"), ",").getItem(0),
@@ -202,11 +216,13 @@ casting_base = (
         F.col("job"),
         F.col("characters").alias("character_name"),
     )
+    # (tconst, ordering) is the primary key of IMDB title.principals, so this
+    # is unique. Part 3 Step 0 validates it before it becomes the entity key.
     .withColumn(
         "cast_id",
         F.concat(F.col("title_id"), F.lit("_"), F.col("billing_order").cast("string")),
     )
-    .withColumn("is_lead", F.col("billing_order") <= 3)
+    .withColumn("is_lead", F.col("billing_order") <= LEAD_BILLING_ORDER)
 )
 
 # Add career_stage at time of this title (how experienced was the person then?)
@@ -270,17 +286,12 @@ ratings_df = (
     )
     .withColumn(
         "sentiment_tier",
-        F.when(F.col("avg_rating") >= 7.5, "Acclaimed")
-         .when(F.col("avg_rating") >= 5.5, "Solid")
-         .when(F.col("avg_rating") >= 4.0, "Mixed")
+        F.when(F.col("avg_rating") >= TOP_TIER_RATING, "Acclaimed")
+         .when(F.col("avg_rating") >= SOLID_RATING, "Solid")
+         .when(F.col("avg_rating") >= MIXED_RATING, "Mixed")
          .otherwise("Panned"),
     )
-    .withColumn(
-        "votes_tier",
-        F.when(F.col("num_votes") >= 100000, "Viral")
-         .when(F.col("num_votes") >= 10000, "Popular")
-         .otherwise("Niche"),
-    )
+    .withColumn("votes_tier", votes_tier_col())
 )
 step_start = time.time()
 ratings_df.write.format("delta").mode("overwrite").saveAsTable("ratings")

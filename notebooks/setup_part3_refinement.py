@@ -33,6 +33,7 @@
 # ============================================================
 
 from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 import time
 
 # ── Step 0: Validate cast_id so it can be set as the entity key ──
@@ -69,7 +70,6 @@ else:
         ),
     )
     # If still not unique (true duplicate edges), disambiguate by row number.
-    from pyspark.sql.window import Window
     w = Window.partitionBy("cast_id").orderBy(F.lit(1))
     cd_fixed = (
         cd_fixed
@@ -133,8 +133,15 @@ person_features = (
     )
 )
 
+# Drop first so re-running this cell doesn't create duplicate columns.
+PERSON_FEATURE_COLS = [
+    "distinct_title_count", "top_title_count", "middle_title_count",
+    "bottom_title_count", "lead_title_count", "appeared_in_top",
+    "appeared_in_bottom", "spans_top_and_bottom",
+]
 people_updated = (
     spark.sql("SELECT * FROM people")
+    .drop(*PERSON_FEATURE_COLS)
     .join(person_features, "person_id", "left")
     # People with no casting rows get 0 / false, not null.
     .fillna(
@@ -192,8 +199,10 @@ title_cast = acting.groupBy("title_id").agg(
     ).alias("top_3_billed_names"),
 )
 
+# Drop first so re-running this cell doesn't create duplicate columns.
 titles_updated = (
     spark.sql("SELECT * FROM titles")
+    .drop("cast_size", "lead_count", "top_3_billed_names")
     .join(title_cast, "title_id", "left")
     .fillna({"cast_size": 0, "lead_count": 0})
 )

@@ -1,8 +1,8 @@
 # Demo Runbook — IMDB Casting Graph, Zero to Live
 
-Setup guide for building the IMDB Casting Graph demo from a clean Fabric workspace. Designed for a 60-minute customer session with live Data Agent + Databricks MCP comparison.
+Setup guide for building the IMDB Casting Graph demo from a clean Fabric workspace. Designed for a 60-minute customer session with a live Data Agent + Claude-over-MCP model comparison.
 
-**Target state:** A live Ontology answering graph questions via Data Agent AND via Claude on Databricks/VS Code through the MCP endpoint.
+**Target state:** A live Ontology answering graph questions via Data Agent AND via Claude (VS Code or the Chainlit web app) through the MCP endpoint.
 
 ---
 
@@ -11,12 +11,12 @@ Setup guide for building the IMDB Casting Graph demo from a clean Fabric workspa
 1. Pull this repo and open `demo/RUNBOOK.md` in a browser tab
 2. Open Fabric portal: https://app.fabric.microsoft.com
 3. Have VS Code installed with the MCP server support (for Phase 6)
-4. Have your Databricks workspace open in another tab (for Phase 7)
-5. Files you'll reference during setup:
+4. Files you'll reference during setup:
    - `notebooks/setup_part1_imdb.py` → Fabric notebook cell 1
    - `notebooks/setup_part2_boxoffice_bacon.py` → Fabric notebook cell 2
    - `config/ontology/entity_descriptions.md` → Ontology editor paste source
    - `config/semantic-model/relationships.md` → Semantic Model guide
+   - `config/agent_prompt.md` → Data Agent instructions paste source (Phase 5)
 
 ---
 
@@ -126,34 +126,13 @@ See `config/semantic-model/relationships.md` for the full reference table.
 1. **+ New item** → **Data Agent (preview)**
 2. Name: `IMDBCastingAgent`
 3. Add `IMDBCastingOntology` as data source
-4. **Agent instructions** — paste:
-
-```
-You are a movie industry analytics agent querying an IMDB casting graph ontology. The graph connects People (actors, directors) to Titles (movies) through CastingDecision edges that carry role metadata (billing_order, career_stage, was_against_type).
-
-Key entity relationships:
-- Person → CastingDecision → Title (the core graph path)
-- Title → Rating (audience reception, real IMDB data)
-- Title → BoxOffice (financial performance, synthetic but correlated)
-- Title → Genre (content category)
-
-Pre-computed columns to use (avoids GQL CASE WHEN limitations):
-- title_tier: Top (>= 7.5), Middle, Bottom (< 4.5)
-- career_stage: Newcomer, Rising, Established, Veteran
-- sentiment_tier: Acclaimed, Solid, Mixed, Panned
-- is_lead: billing_order <= 3
-- was_against_type: person's dominant genre != title's primary genre
-- bacon_number: shortest co-star path distance to Kevin Bacon
-- is_sleeper_hit: budget < $30M AND ROI > 200%
-- is_flop: budget > $50M AND ROI < -30%
-
-When answering multi-hop questions, explain which entities you're traversing.
-Support group by in GQL.
-```
-
+4. **Agent instructions** — paste the entire contents of **`config/agent_prompt.md`**.
+   That file is the single source of truth for the agent prompt — the Chainlit
+   web app loads the same file at runtime, so a threshold or steering change
+   only ever needs to be made once.
 5. **Add 3 example queries:**
    - "What's the average rating of Top-tier versus Bottom-tier movies?" → simple aggregation on title_tier
-   - "Which actors appeared in both Top-tier and Bottom-tier movies?" → multi-hop Person → CastingDecision → Title traversal
+   - "How many people span both Top and Bottom rating tiers?" → single-entity filter on the pre-computed spans_top_and_bottom column
    - "What genre has the highest average ROI?" → BoxOffice → Title → Genre traversal
 6. Click **Save** → wait 2 min → **Publish**
 
@@ -189,25 +168,7 @@ Support group by in GQL.
 
 ---
 
-## Phase 7 — Databricks notebook (10 min, if doing live Databricks demo)
-
-1. Open your Azure Databricks workspace
-2. Create a new notebook: `imdb_mcp_demo`
-3. Install dependencies:
-   ```python
-   %pip install anthropic mcp azure-identity
-   ```
-4. Paste the Databricks MCP connection cells from `databricks/01_mcp_connection.py`
-5. Run the connection cell — verify it discovers `search_ontology` and `list_ontology_entity_types` tools
-6. Run a demo query through Claude
-
-See `databricks/` folder for the notebook templates (Checkpoint 4).
-
-**Checkpoint:** Databricks notebook successfully queries the Ontology MCP endpoint via Claude.
-
----
-
-## Phase 8 — Smoke test (5 min)
+## Phase 7 — Smoke test (5 min)
 
 Run these 3 queries in the Data Agent to confirm the demo is ready:
 
@@ -235,10 +196,6 @@ Run these 3 queries in the Data Agent to confirm the demo is ready:
 - Run the demo queries in the Data Agent only (still proves Ontology value)
 - Narrate the MCP story with the architecture diagram
 
-### Databricks auth fails
-- Show the notebook code (the Anthropic SDK + MCP client pattern)
-- Run Claude queries locally in VS Code instead (same MCP endpoint)
-
 ### Everything is down
 - `demo/TALKING_POINTS.md` works as a pure narrative walkthrough
 
@@ -253,11 +210,10 @@ Run these 3 queries in the Data Agent to confirm the demo is ready:
 | 2 — Data load notebook | 15 | 25 | Mostly waiting on download + BFS |
 | 3 — Semantic Model | 5 | 30 | Zero DAX — fastest phase |
 | 4 — Ontology | 10 | 40 | Paste descriptions + publish |
-| 5 — Data Agent | 5 | 45 | |
+| 5 — Data Agent | 5 | 45 | Instructions from `config/agent_prompt.md` |
 | 6 — MCP + VS Code | 5 | 50 | |
-| 7 — Databricks | 10 | 60 | Optional if not doing live comparison |
-| 8 — Smoke test | 5 | 65 | Before the customer session |
+| 7 — Smoke test | 5 | 55 | Before the customer session |
 
-**Total build time:** ~65 min. Do this BEFORE the customer session, not during.
+**Total build time:** ~55 min. Do this BEFORE the customer session, not during.
 
 **The 60-min customer session itself** follows `demo/TALKING_POINTS.md` — no building, just live queries and narration.
