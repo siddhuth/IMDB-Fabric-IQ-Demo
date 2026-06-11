@@ -1,205 +1,259 @@
 # ============================================================
-# IMDB Casting Graph — Chainlit Azure Web App
+# IMDB Casting Graph — Chainlit Web App
 # ============================================================
-# Chat interface: Claude (via Databricks Model Serving) +
-# Fabric IQ Ontology MCP endpoint.
+# Chat interface: Claude (Anthropic API) + Fabric IQ Ontology
+# MCP endpoint.
 #
 # Env vars required:
-#   MCP_ENDPOINT             — Ontology MCP URL
-#   DATABRICKS_HOST          — e.g. https://adb-xxxxx.azuredatabricks.net
-#   DATABRICKS_TOKEN         — personal access token
-#   DATABRICKS_MODEL         — e.g. databricks-claude-sonnet-4
+#   MCP_ENDPOINT        — Ontology MCP URL
+#   ANTHROPIC_API_KEY   — Anthropic API key
+# Optional:
+#   ANTHROPIC_MODEL     — defaults to claude-opus-4-8
+#   AGENT_PROMPT_PATH   — path to the system prompt; defaults to
+#                         agent_prompt.md beside this file, falling
+#                         back to ../config/agent_prompt.md
 #
-# Auth: Uses interactive browser login (same as VS Code).
-#       On first run, a browser window opens to sign in.
+# Fabric auth: DefaultAzureCredential — picks up a Managed Identity,
+# service principal, or Azure CLI login in the cloud, and falls back
+# to an interactive browser sign-in for local development.
 # ============================================================
 
-import os
+import asyncio
+import itertools
 import json
-import httpx
+import os
+import time
+from pathlib import Path
+
+import anthropic
 import chainlit as cl
-from azure.identity import InteractiveBrowserCredential
-from openai import AsyncOpenAI
+import httpx
+from azure.identity import DefaultAzureCredential
 
 # ── Configuration ──
-MCP_ENDPOINT = os.environ["MCP_ENDPOINT"]
-DATABRICKS_HOST = os.environ["DATABRICKS_HOST"]
-DATABRICKS_TOKEN = os.environ["DATABRICKS_TOKEN"]
-MODEL = os.environ.get("DATABRICKS_MODEL", "databricks-claude-sonnet-4")
 
-# Interactive browser auth — opens a browser window to sign in
-# Uses the same Microsoft credentials as VS Code MCP
-credential = InteractiveBrowserCredential()
-
-# Databricks Model Serving uses the OpenAI-compatible API
-llm_client = AsyncOpenAI(
-    api_key=DATABRICKS_TOKEN,
-    base_url=f"{DATABRICKS_HOST}/serving-endpoints",
-)
-
-SYSTEM_PROMPT = """You are an IMDB casting graph analyst querying a Microsoft Fabric IQ
-Ontology via MCP. The graph connects People (actors, directors) to
-Titles (movies) through CastingDecision edges.
-
-Entity graph:
-  Person --[cast_in]--> CastingDecision --[for_title]--> Title
-  Title --[has_rating]--> Rating (real IMDB data)
-  Title --[has_performance]--> BoxOffice (synthetic, correlated)
-  Title --[in_genre]--> Genre
-
-Pre-computed columns (use instead of conditional logic):
-  title_tier: Top / Middle / Bottom
-  career_stage: Newcomer / Rising / Established / Veteran
-  sentiment_tier: Acclaimed / Solid / Mixed / Panned
-  is_lead, was_against_type, bacon_number, is_sleeper_hit, is_flop
-
-When answering:
-1. Explain which entities you're traversing
-2. If a query fails, split into simpler queries and retry
-3. Cite specific numbers
-4. Format results as markdown tables when comparing groups
-5. Add insight beyond just the numbers"""
+MAX_AGENT_TURNS = 10
 
 
-# ── MCP client functions ──
+def _require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(
+            f"Missing required environment variable {name}. "
+            "Copy webapp/.env.example to webapp/.env and fill in values."
+        )
+    return value
 
-def get_fabric_token():
-    return credential.get_token("https://api.fabric.microsoft.com/.default").token
+
+def _load_system_prompt() -> str:
+    """The canonical prompt lives in config/agent_prompt.md.
+
+    Deployments that ship only the webapp/ folder copy it next to
+    app.py (see DEPLOY.md); AGENT_PROMPT_PATH overrides both.
+    """
+    here = Path(__file__).resolve().parent
+    candidates = [
+        os.environ.get("AGENT_PROMPT_PATH"),
+        here / "agent_prompt.md",
+        here.parent / "config" / "agent_prompt.md",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return Path(candidate).read_text(encoding="utf-8")
+    raise RuntimeError(
+        "Could not find the agent prompt. Expected agent_prompt.md beside "
+        "app.py or at ../config/agent_prompt.md, or set AGENT_PROMPT_PATH."
+    )
 
 
-async def mcp_call(method, params, request_id=1):
-    token = get_fabric_token()
+MCP_ENDPOINT = _require_env("MCP_ENDPOINT")
+MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
+SYSTEM_PROMPT = _load_system_prompt()
+
+credential = DefaultAzureCredential(exclude_interactive_browser_credential=False)
+llm_client = anthropic.AsyncAnthropic()  # reads ANTHROPIC_API_KEY
+http_client = httpx.AsyncClient(timeout=120.0)
+
+# ── Fabric token (cached; Entra tokens live ~1h) ──
+
+_token_cache = {"token": "", "expires_on": 0.0}
+_token_lock = asyncio.Lock()
+_request_ids = itertools.count(1)
+
+
+async def get_fabric_token() -> str:
+    async with _token_lock:
+        if _token_cache["expires_on"] - time.time() > 300:
+            return _token_cache["token"]
+        # credential.get_token is blocking network I/O — keep it off the event loop
+        access = await asyncio.to_thread(
+            credential.get_token, "https://api.fabric.microsoft.com/.default"
+        )
+        _token_cache["token"] = access.token
+        _token_cache["expires_on"] = access.expires_on
+        return access.token
+
+
+# ── MCP client (JSON-RPC over HTTP) ──
+
+
+async def mcp_call(method: str, params: dict) -> dict:
+    token = await get_fabric_token()
     payload = {
         "jsonrpc": "2.0",
         "method": method,
         "params": params,
-        "id": request_id,
+        "id": next(_request_ids),
     }
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            MCP_ENDPOINT,
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
+    resp = await http_client.post(
+        MCP_ENDPOINT,
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    if resp.status_code == 401:
+        raise RuntimeError(
+            "Fabric returned 401 Unauthorized. The signed-in identity needs "
+            "Member (or higher) role on the workspace that owns the ontology, "
+            "or the token expired — restart the app to re-authenticate."
         )
-        return resp.json()
+    resp.raise_for_status()
+    return resp.json()
 
 
-async def discover_tools():
-    await mcp_call("initialize", {
-        "protocolVersion": "2025-03-26",
-        "capabilities": {},
-        "clientInfo": {"name": "imdb-casting-webapp", "version": "1.0"},
-    }, request_id=1)
-    result = await mcp_call("tools/list", {}, request_id=2)
+async def discover_tools() -> list[dict]:
+    await mcp_call(
+        "initialize",
+        {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "imdb-casting-webapp", "version": "2.0"},
+        },
+    )
+    result = await mcp_call("tools/list", {})
     return result.get("result", {}).get("tools", [])
 
 
-async def call_tool(tool_name, tool_input):
-    result = await mcp_call("tools/call", {
-        "name": tool_name,
-        "arguments": tool_input,
-    }, request_id=3)
+async def call_tool(tool_name: str, tool_input: dict) -> dict:
+    result = await mcp_call(
+        "tools/call", {"name": tool_name, "arguments": tool_input}
+    )
     if "error" in result:
         return {"error": result["error"]}
     return result.get("result", {})
 
 
-# ── Agent loop using OpenAI-compatible API with tool_use ──
-
-MCP_TOOLS = []
-
-
-def get_openai_tools():
-    """Convert MCP tool schemas to OpenAI function-calling format."""
-    tools = []
-    for t in MCP_TOOLS:
-        schema = t.get("inputSchema", {"type": "object", "properties": {}})
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": schema,
-            },
-        })
-    return tools
-
-
-async def run_agent(question, msg):
-    tools = get_openai_tools()
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": question},
+def to_anthropic_tools(mcp_tools: list[dict]) -> list[dict]:
+    """Convert MCP tool schemas to Anthropic tool format."""
+    return [
+        {
+            "name": t["name"],
+            "description": t.get("description", ""),
+            "input_schema": t.get("inputSchema", {"type": "object", "properties": {}}),
+        }
+        for t in mcp_tools
     ]
 
-    for turn in range(10):
-        response = await llm_client.chat.completions.create(
+
+# ── Agent loop ──
+
+
+async def run_agent(question: str, tools: list[dict]) -> str:
+    messages = [{"role": "user", "content": question}]
+
+    for _ in range(MAX_AGENT_TURNS):
+        response = await llm_client.messages.create(
             model=MODEL,
-            max_tokens=4096,
+            max_tokens=16000,
+            thinking={"type": "adaptive"},
+            system=SYSTEM_PROMPT,
+            tools=tools,
             messages=messages,
-            tools=tools if tools else None,
         )
 
-        choice = response.choices[0]
+        tool_calls = [b for b in response.content if b.type == "tool_use"]
 
-        # If no tool calls, return the text answer
-        if not choice.message.tool_calls:
-            return choice.message.content or "No response generated."
+        if not tool_calls:
+            text = "\n".join(b.text for b in response.content if b.type == "text")
+            return text or "No response generated."
 
-        # Process tool calls
-        messages.append(choice.message)
+        # Echo the full assistant content (including thinking blocks) back
+        messages.append({"role": "assistant", "content": response.content})
 
-        for tc in choice.message.tool_calls:
-            tool_name = tc.function.name
-            tool_input = json.loads(tc.function.arguments)
+        tool_results = []
+        for tc in tool_calls:
+            async with cl.Step(name=f"🔧 {tc.name}", type="tool") as step:
+                step.input = json.dumps(tc.input, indent=2)
+                result = await call_tool(tc.name, tc.input)
+                preview = json.dumps(result, indent=2)
+                step.output = preview[:500] + ("..." if len(preview) > 500 else "")
 
-            async with cl.Step(name=f"🔧 {tool_name}", type="tool") as step:
-                step.input = json.dumps(tool_input, indent=2)
-                result = await call_tool(tool_name, tool_input)
-                result_str = json.dumps(result, indent=2)
-                step.output = result_str[:500] + ("..." if len(result_str) > 500 else "")
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tc.id,
+                    "content": json.dumps(result),
+                }
+            )
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": json.dumps(result),
-            })
+        messages.append({"role": "user", "content": tool_results})
 
     return "Agent reached max turns without completing."
 
 
 # ── Chainlit handlers ──
 
+
 @cl.on_chat_start
 async def start():
-    global MCP_TOOLS
-    MCP_TOOLS = await discover_tools()
-    tool_names = [t["name"] for t in MCP_TOOLS]
+    try:
+        mcp_tools = await discover_tools()
+    except Exception as exc:
+        await cl.Message(
+            content=f"⚠️ Could not connect to the Fabric MCP endpoint:\n\n`{exc}`"
+        ).send()
+        return
+
+    cl.user_session.set("tools", to_anthropic_tools(mcp_tools))
+    tool_names = [t["name"] for t in mcp_tools]
 
     await cl.Message(
         content=(
             "## 🎬 IMDB Casting Graph Explorer\n\n"
             "Connected to the Fabric IQ Ontology via MCP. "
-            f"Discovered **{len(MCP_TOOLS)}** tools: `{'`, `'.join(tool_names)}`\n\n"
+            f"Discovered **{len(mcp_tools)}** tools: `{'`, `'.join(tool_names)}`\n\n"
             "Ask me anything about movies, actors, casting decisions, "
             "box office performance, or Kevin Bacon.\n\n"
             "**Try these:**\n"
-            "- *What's the average rating of Top-tier vs Bottom-tier movies?*\n"
-            "- *Which actors appeared in both Top and Bottom tier movies?*\n"
-            "- *What genre has the highest ROI?*\n"
-            "- *How many people are within 3 hops of Kevin Bacon?*"
+            "- *How many titles are in the Top tier?*\n"
+            "- *How many people span both Top and Bottom rating tiers?*\n"
+            "- *Who are the top-billed stars of the highest-rated movie?*\n"
+            "- *What is the average ROI by primary genre, only including "
+            "genres having more than 100 titles?*"
         )
     ).send()
 
 
 @cl.on_message
 async def main(message: cl.Message):
+    tools = cl.user_session.get("tools")
+    if not tools:
+        await cl.Message(
+            content="Not connected to the ontology — start a new chat to retry."
+        ).send()
+        return
+
     msg = cl.Message(content="")
     await msg.send()
 
-    answer = await run_agent(message.content, msg)
+    try:
+        answer = await run_agent(message.content, tools)
+    except anthropic.APIStatusError as exc:
+        answer = f"⚠️ Anthropic API error ({exc.status_code}): {exc.message}"
+    except (httpx.HTTPError, RuntimeError) as exc:
+        answer = f"⚠️ Fabric MCP error: {exc}"
+
     msg.content = answer
     await msg.update()

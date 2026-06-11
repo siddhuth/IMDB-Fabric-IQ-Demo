@@ -46,6 +46,8 @@ Five questions to ask live during the 60-minute session. Each proves a specific 
 
 **Narrate:** *"This question required the agent to traverse Person to CastingDecision to Title, filter on title_tier in both directions, and intersect the results. That's a graph pattern — not a table join. Your existing Semantic Model relationships made this possible."*
 
+> ⚠️ **Honesty check:** if the agent answers this via the pre-computed `spans_top_and_bottom` flag instead of a live traversal (likely until the CastingDecision entity-key fix from `demo/REFINEMENT.md` is published), narrate it as a materialized graph feature — *"we pre-computed common graph-derived features for reliability and latency, while preserving the underlying graph for drill-through"* — not as a live multi-hop query.
+
 ---
 
 ## Q3 — Edge properties matter (0:28)
@@ -76,13 +78,13 @@ Five questions to ask live during the 60-minute session. Each proves a specific 
 
 ## Q5 — The model comparison (0:45)
 
-**This is the pivot to Databricks + MCP.**
+**This is the pivot to Claude + MCP.**
 
 **Say to the room:** *"You just watched the Data Agent answer these questions using GPT-4o and the Ontology's native GQL. Now let me show you the same graph, different model."*
 
 **Switch to either:**
-- **VS Code** with the Ontology MCP server connected (Claude Sonnet as orchestrator)
-- **Databricks notebook** with Claude calling search_ontology via MCP
+- **VS Code** with the Ontology MCP server connected (Claude as orchestrator)
+- **The Chainlit web app** (`webapp/`) with Claude calling search_ontology via MCP
 
 **Ask the same Q3** (career_stage in Top vs Bottom) — the comparison question.
 
@@ -98,7 +100,7 @@ Five questions to ask live during the 60-minute session. Each proves a specific 
 
 **Say:**
 
-> *"What you saw today was one Semantic Model — zero DAX, just tables and relationships — turned into a graph ontology in one click. That ontology answered questions from a Data Agent powered by GPT-4o, and from a Databricks notebook powered by Claude, using the same MCP endpoint. No data migration. No duplicate modeling. No new infrastructure.*
+> *"What you saw today was one Semantic Model — zero DAX, just tables and relationships — turned into a graph ontology in one click. That ontology answered questions from a Data Agent powered by GPT-4o, and from Claude over the same MCP endpoint. No data migration. No duplicate modeling. No new infrastructure.*
 >
 > *Your Semantic Models aren't a sunk cost. They're the foundation for graph-based AI. Pick one tomorrow. Generate an ontology. Ask it a question you've never been able to ask before."*
 

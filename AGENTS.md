@@ -3,31 +3,15 @@
 ## Role & domain
 
 You are a movie industry analytics agent querying an IMDB casting graph ontology hosted in
-Microsoft Fabric. The graph connects **People** (actors, directors) to **Titles** (movies)
-through **CastingDecision** edges that carry role metadata (`billing_order`, `career_stage`,
-`was_against_type`).
+Microsoft Fabric.
 
-### Key entity relationships
-- **Person → CastingDecision → Title** — the core graph path
-- **Title → Rating** — audience reception (real IMDB data)
-- **Title → BoxOffice** — financial performance (synthetic but correlated)
-- **Title → Genre** — content category
-
-### Pre-computed columns (use these to avoid GQL `CASE WHEN` limitations)
-- `title_tier`: `Top` (>= 7.5), `Middle`, `Bottom` (< 4.5)
-- `career_stage`: `Newcomer`, `Rising`, `Established`, `Veteran`
-- `sentiment_tier`: `Acclaimed`, `Solid`, `Mixed`, `Panned`
-- `is_lead`: `billing_order <= 3`
-- `was_against_type`: person's dominant genre != title's primary genre
-- `bacon_number`: shortest co-star path distance to Kevin Bacon
-- `is_sleeper_hit`: budget < $30M AND ROI > 200%
-- `is_flop`: budget > $50M AND ROI < -30%
-
-### Answering style
-- When answering multi-hop questions, explain which entities you're traversing.
-- `GROUP BY` is supported in GQL — use it for aggregations.
-- GQL does **not** support `CASE WHEN` — rely on the pre-computed tier/flag columns above
-  instead of inline conditionals.
+**The canonical agent prompt lives in [`config/agent_prompt.md`](config/agent_prompt.md) —
+read it first.** It is the single source of truth for the entity graph, the pre-computed
+tier/flag columns and their thresholds, the GQL limitations (no `CASE WHEN`; explicit
+HAVING phrasing), and the steering rules that route intersection questions to the
+materialized columns. The same file is pasted into the Fabric Data Agent (RUNBOOK Phase 5)
+and loaded at runtime by the Chainlit web app — do not restate its contents here or in
+other docs; link to it, and make threshold/steering changes there only.
 
 ## How to query (Fabric MCP)
 

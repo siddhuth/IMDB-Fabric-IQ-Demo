@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.env
+# Deploy-time copy of config/agent_prompt.md (see webapp/DEPLOY.md)
+webapp/agent_prompt.md

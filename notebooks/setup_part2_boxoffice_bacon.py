@@ -129,8 +129,13 @@ bacon_check = casting.filter(F.col("person_id") == BACON_ID).count()
 if bacon_check == 0:
     print("  ⚠️  Kevin Bacon (nm0000102) not in filtered dataset — skipping bacon_number")
     print("     (This happens if Bacon's movies don't meet the 1K+ vote threshold)")
-    # Still add the column with nulls so the schema is consistent
-    people_updated = spark.sql("SELECT *, CAST(NULL AS INT) AS bacon_number FROM people")
+    # Still add the column with nulls so the schema is consistent.
+    # Drop first so re-running this cell doesn't create a duplicate column.
+    people_updated = (
+        spark.sql("SELECT * FROM people")
+        .drop("bacon_number")
+        .withColumn("bacon_number", F.lit(None).cast("int"))
+    )
     people_updated.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable("people")
 else:
     # Build co-star adjacency: two people share a movie
@@ -154,17 +159,22 @@ else:
             .distinct()
             .join(all_reached, "person_id", "left_anti")
             .withColumn("bacon_number", F.lit(degree))
+            # Materialize each frontier — without this the union's lineage
+            # grows per degree and every count() re-evaluates the whole plan.
+            .localCheckpoint()
         )
         new_count = new_people.count()
-        all_reached = all_reached.union(new_people)
+        all_reached = all_reached.union(new_people).localCheckpoint()
         reached = new_people
         print(f"  Bacon degree {degree}: {new_count:,} new people (total: {all_reached.count():,})")
         if new_count == 0:
             break
 
-    # Join bacon_number back to people table
+    # Join bacon_number back to people table.
+    # Drop first so re-running this cell doesn't create a duplicate column.
     people_with_bacon = (
         spark.sql("SELECT * FROM people")
+        .drop("bacon_number")
         .join(all_reached.select("person_id", "bacon_number"), "person_id", "left")
     )
     people_with_bacon.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable("people")
@@ -184,8 +194,10 @@ top3_cast = (
     .agg(F.round(F.avg("career_title_count"), 1).alias("cast_experience"))
 )
 
+# Drop first so re-running this cell doesn't create a duplicate column.
 titles_updated = (
     spark.sql("SELECT * FROM titles")
+    .drop("cast_experience")
     .join(top3_cast, "title_id", "left")
 )
 titles_updated.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable("titles")
